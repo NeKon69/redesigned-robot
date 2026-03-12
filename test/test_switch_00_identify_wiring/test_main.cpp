@@ -86,19 +86,23 @@ static void printInference(const char *label, const SwitchSnapshot &snap) {
   Serial.println(" => ambiguous behavior; check wiring/board electronics.");
 }
 
-void test_identify_switch_behavior_on_pins_4_and_5() {
+void test_identify_switch_behavior_on_configured_pins() {
   pinMode(SWITCH1_PIN, INPUT_PULLUP);
   pinMode(SWITCH2_PIN, INPUT_PULLUP);
 
-  Serial.println("Switch identification test on D4 and D5");
+  Serial.println("Switch identification test on configured pins");
   Serial.println("This test infers NO/NC behavior based on idle and pressed levels.");
+  Serial.print("SW1 pin: D");
+  Serial.println(SWITCH1_PIN);
+  Serial.print("SW2 pin: D");
+  Serial.println(SWITCH2_PIN);
 
-  SwitchSnapshot sw1 = characterizeSwitch(SWITCH1_PIN, "SW1 (D4)");
-  SwitchSnapshot sw2 = characterizeSwitch(SWITCH2_PIN, "SW2 (D5)");
+  SwitchSnapshot sw1 = characterizeSwitch(SWITCH1_PIN, "SW1");
+  SwitchSnapshot sw2 = characterizeSwitch(SWITCH2_PIN, "SW2");
 
   Serial.println("==== Inference Summary ====");
-  printInference("SW1 (D4)", sw1);
-  printInference("SW2 (D5)", sw2);
+  printInference("SW1", sw1);
+  printInference("SW2", sw2);
 
   TEST_ASSERT_TRUE_MESSAGE(sw1.captured_idle, "SW1 idle level not captured.");
   TEST_ASSERT_TRUE_MESSAGE(sw2.captured_idle, "SW2 idle level not captured.");
@@ -110,10 +114,9 @@ void setup() {
   }
 
   UNITY_BEGIN();
-  RUN_TEST(test_identify_switch_behavior_on_pins_4_and_5);
+  RUN_TEST(test_identify_switch_behavior_on_configured_pins);
   UNITY_END();
 }
 
 void loop() {
 }
-
