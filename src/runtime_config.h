@@ -51,3 +51,4 @@ static constexpr char KEYPAD_MAP[KEYPAD_ROWS][KEYPAD_COLS] = {
 static constexpr unsigned long KEYPAD_HOLD_MS = 500;
 static constexpr unsigned long KEYPAD_DEBOUNCE_MS = 20;
 static constexpr unsigned long RFID_REPEAT_SUPPRESS_MS = 1200;
+static constexpr unsigned long RFID_RECOVERY_COOLDOWN_MS = 250;

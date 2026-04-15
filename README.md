@@ -219,6 +219,8 @@ Example Arduino -> Pi events:
 
 ```json
 {"type":"key_event","key":"1","state":"pressed"}
+{"type":"debug_rfid_read_failed"}
+{"type":"debug_rfid_recovered"}
 {"type":"rfid_scan","uid":"56DA841F"}
 {"type":"switch_state","box":1,"pressed":true}
 {"type":"motion_done","step":"forward_cell"}

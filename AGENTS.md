@@ -206,6 +206,8 @@
 - `key_event` is a keypad event.
 - `switch_state` is a switch edge/change event.
 - `rfid_scan` is a normalized card UID event.
+- `debug_rfid_read_failed` means RC522 saw a candidate card but UID read failed.
+- `debug_rfid_recovered` means Arduino reinitialized RC522 after a read failure.
 - `motion_done` means one timed movement step completed.
 - `debug_compact_rx` is temporary transport debugging.
 - `debug_move_request` is temporary move handling debugging.

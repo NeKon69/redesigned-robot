@@ -419,7 +419,15 @@ void ArduinoBridge::emitSwitchEvents_() {
 
 void ArduinoBridge::emitRfidEvents_() {
   String uid;
-  if (rfid_.pollUid(uid)) {
+  const RfidReader::PollStatus status = rfid_.pollUid(uid);
+  if (rfid_.consumeRecoveredSinceLastPoll()) {
+    protocol_.sendEvent("debug_rfid_recovered", "");
+  }
+  if (status == RfidReader::PollStatus::ReadFailed) {
+    protocol_.sendEvent("debug_rfid_read_failed", "");
+    return;
+  }
+  if (status == RfidReader::PollStatus::ScanSuccess) {
     protocol_.sendEvent("rfid_scan",
                         String("\"uid\":\"") + SerialProtocol::escape(uid) + "\"");
   }
