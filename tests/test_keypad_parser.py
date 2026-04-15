@@ -29,6 +29,18 @@ def test_star_backspaces_and_d_clears() -> None:
     assert parser.buffer == ""
 
 
+def test_zero_requests_full_reset() -> None:
+    parser = KeypadParser()
+
+    parser.handle_key("1")
+    parser.handle_key("2")
+    result = parser.handle_key("0")
+
+    assert result.reset_requested is True
+    assert result.display_text == ""
+    assert parser.buffer == ""
+
+
 def test_rejects_invalid_box_id() -> None:
     parser = KeypadParser()
 

@@ -10,6 +10,7 @@ class KeypadParseResult:
     display_text: str
     completed_jobs: list[DeliveryJob] = field(default_factory=list)
     error: str | None = None
+    reset_requested: bool = False
 
 
 class KeypadParser:
@@ -29,6 +30,10 @@ class KeypadParser:
                 display_text=self._buffer, error="Invalid key length"
             )
 
+        if key == "0":
+            self.reset()
+            return KeypadParseResult(display_text="", reset_requested=True)
+
         if key == "*":
             self._buffer = self._buffer[:-1]
             return KeypadParseResult(display_text=self._buffer)
@@ -37,7 +42,7 @@ class KeypadParser:
             self.reset()
             return KeypadParseResult(display_text=self._buffer)
 
-        allowed = "0123456789ABCD#"
+        allowed = "123456789ABCD#"
         if key not in allowed:
             return KeypadParseResult(
                 display_text=self._buffer, error=f"Unsupported key: {key}"

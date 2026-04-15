@@ -1,6 +1,7 @@
 from pi.cabinet_index import CabinetIndex
 from pi.config import load_project_config
 from pi.map_loader import load_grid_map
+from pi.models import Pose
 from pi.pathfinding import plan_route
 
 
@@ -27,3 +28,16 @@ def test_same_pose_route_is_empty() -> None:
     assert route.actions == []
     assert route.turns == 0
     assert route.steps == 0
+
+
+def test_route_prefers_reverse_when_goal_is_directly_behind() -> None:
+    config = load_project_config()
+    grid_map = load_grid_map(config.map_config)
+
+    start = Pose(x=1, y=1, heading="E")
+    goal = Pose(x=0, y=1, heading="E")
+    route = plan_route(grid_map, start, goal)
+
+    assert route.actions == ["reverse_cell"]
+    assert route.turns == 0
+    assert route.steps == 1

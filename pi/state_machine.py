@@ -48,14 +48,15 @@ class RobotStateMachine:
     current_pose: Pose = field(init=False)
     mode: RobotMode = RobotMode.IDLE
     active_job: DeliveryJob | None = None
+    active_boxes: tuple[int, ...] = field(default_factory=tuple)
     pending_actions: list[str] = field(default_factory=list)
     next_action_due_s: float | None = None
     box_present: dict[int, bool | None] = field(
         default_factory=lambda: {1: None, 2: None}
     )
     handoff_started_at_s: float | None = None
-    handoff_seen_pressed: bool = False
-    handoff_seen_released: bool = False
+    handoff_boxes_pressed: set[int] = field(default_factory=set)
+    handoff_boxes_released: set[int] = field(default_factory=set)
     next_presence_refresh_s: float | None = None
     loading_boxes_needed: set[int] = field(default_factory=set)
     loading_boxes_ready: set[int] = field(default_factory=set)
@@ -74,7 +75,7 @@ class RobotStateMachine:
         current = time.monotonic() if now_s is None else now_s
         if self.mode == RobotMode.WAITING_FOR_HANDOFF:
             self._maybe_start_return_home(current)
-        if self.mode == RobotMode.WAITING_FOR_BOX:
+        if self.mode in {RobotMode.WAITING_FOR_BOX, RobotMode.WAITING_FOR_HANDOFF}:
             self._maybe_refresh_box_presence(current)
         if self.next_action_due_s is None:
             return
@@ -103,13 +104,14 @@ class RobotStateMachine:
         if event == "state":
             self._handle_state_snapshot(message)
             return
-        if (
-            event == "key_event"
-            and message.get("state") == "pressed"
-            and self.mode == RobotMode.IDLE
-        ):
-            self._handle_key(str(message.get("key", "")))
-            return
+        if event == "key_event" and message.get("state") == "pressed":
+            key = str(message.get("key", ""))
+            if key == "0":
+                self._handle_reset_request()
+                return
+            if self.mode == RobotMode.IDLE:
+                self._handle_key(key)
+                return
         if event == "motion_done":
             self._log(f"motion_done action={message.get('action', '')}")
             self._handle_motion_done()
@@ -128,6 +130,9 @@ class RobotStateMachine:
     def _handle_key(self, key: str) -> None:
         self._log(f"key pressed={key!r} buffer_before={self.keypad_parser.buffer!r}")
         result = self.keypad_parser.handle_key(key)
+        if result.reset_requested:
+            self._handle_reset_request()
+            return
         if result.error:
             self._log(f"key parse error={result.error}")
             self.arduino.lcd_set(["Input error", result.error[:20], "", "D = clear"])
@@ -154,6 +159,8 @@ class RobotStateMachine:
             self._refresh_idle_lcd()
             return
 
+        self.active_boxes = self._collect_active_boxes(self.active_job)
+
         try:
             goal_pose = self.cabinet_index.get_pose(self.active_job.cabinet_id)
             route = plan_route(self.grid_map, self.current_pose, goal_pose)
@@ -162,12 +169,11 @@ class RobotStateMachine:
             self.arduino.lcd_set(
                 ["Unknown cabinet", self.active_job.cabinet_id[:20], "", "D = clear"]
             )
-            self.active_job = None
-            self.mode = RobotMode.IDLE
+            self._clear_active_delivery_state()
             self._try_start_next_job()
             return
         self._log(
-            f"start_job cabinet={self.active_job.cabinet_id} box={self.active_job.box_id} "
+            f"start_job cabinet={self.active_job.cabinet_id} boxes={list(self.active_boxes)} "
             f"route_steps={route.steps} turns={route.turns} actions={route.actions}"
         )
         self.pending_actions = route.actions.copy()
@@ -182,7 +188,7 @@ class RobotStateMachine:
         self.mode = RobotMode.WAITING_FOR_BOX
         self.next_action_due_s = None
         self.next_presence_refresh_s = time.monotonic() + 0.5
-        self.loading_boxes_needed = {self.active_job.box_id}
+        self.loading_boxes_needed = set(self.active_boxes)
         self.loading_boxes_needed.update(job.box_id for job in self.queue.snapshot())
         self.loading_boxes_ready.clear()
         self.loading_seen_released = {1: False, 2: False}
@@ -190,7 +196,9 @@ class RobotStateMachine:
         for box_id in sorted(self.loading_boxes_needed):
             self.arduino.servo_open(box_id)
         self._request_state_refresh()
-        self.arduino.lcd_set(waiting_box_lines(self.active_job, len(self.queue)))
+        self.arduino.lcd_set(
+            waiting_box_lines(self.active_job, len(self.queue), self.active_boxes)
+        )
 
     def _prepare_job_start(self) -> None:
         if self.active_job is None:
@@ -198,7 +206,7 @@ class RobotStateMachine:
         if self.current_pose == self.grid_map.home:
             if not self.loading_boxes_needed.issubset(self.loading_boxes_ready):
                 return
-        elif self.box_present.get(self.active_job.box_id) is not True:
+        elif any(self.box_present.get(box) is not True for box in self.active_boxes):
             return
 
         self.mode = RobotMode.MOVING_TO_CABINET
@@ -206,9 +214,12 @@ class RobotStateMachine:
         self.loading_boxes_needed.clear()
         self.loading_boxes_ready.clear()
         self.loading_seen_released = {1: False, 2: False}
-        self._log(f"closing_box_before_move box={self.active_job.box_id}")
-        self.arduino.servo_close(self.active_job.box_id)
-        self.arduino.lcd_set(moving_lines(self.active_job, len(self.queue)))
+        self._log(f"closing_boxes_before_move boxes={list(self.active_boxes)}")
+        for box in sorted(self.active_boxes):
+            self.arduino.servo_close(box)
+        self.arduino.lcd_set(
+            moving_lines(self.active_job, len(self.queue), self.active_boxes)
+        )
         self._schedule_next_action(BOX_CLOSE_SETTLE_S)
 
     def _dispatch_next_action_now(self) -> None:
@@ -219,13 +230,15 @@ class RobotStateMachine:
             self.mode = RobotMode.WAITING_FOR_CARD
             if self.active_job is not None:
                 self._log(
-                    f"arrived cabinet={self.active_job.cabinet_id} waiting_for_card box={self.active_job.box_id}"
+                    f"arrived cabinet={self.active_job.cabinet_id} waiting_for_card boxes={list(self.active_boxes)}"
                 )
                 self.current_pose = self.cabinet_index.get_pose(
                     self.active_job.cabinet_id
                 )
                 self.arduino.lcd_set(
-                    waiting_card_lines(self.active_job, len(self.queue))
+                    waiting_card_lines(
+                        self.active_job, len(self.queue), self.active_boxes
+                    )
                 )
             return
         action = self.pending_actions.pop(0)
@@ -264,7 +277,7 @@ class RobotStateMachine:
             if (
                 self.mode == RobotMode.WAITING_FOR_BOX
                 and self.active_job is not None
-                and self.active_job.box_id == box
+                and box in self.active_boxes
             ):
                 self._prepare_job_start()
 
@@ -283,7 +296,7 @@ class RobotStateMachine:
                 self._prepare_job_start()
             return
 
-        if box != self.active_job.box_id:
+        if box not in self.active_boxes:
             return
 
     def _handle_rfid(self, uid: str) -> None:
@@ -292,56 +305,56 @@ class RobotStateMachine:
         self._log(f"rfid_scan uid={uid} cabinet={self.active_job.cabinet_id}")
         if not self.card_registry.is_allowed(self.active_job.cabinet_id, uid):
             self._log("rfid_result=denied")
-            self.arduino.lcd_set(access_denied_lines(self.active_job, len(self.queue)))
+            self.arduino.lcd_set(
+                access_denied_lines(self.active_job, len(self.queue), self.active_boxes)
+            )
             return
 
-        self._log(f"rfid_result=allowed opening_box={self.active_job.box_id}")
-        self.arduino.servo_open(self.active_job.box_id)
+        self._log(f"rfid_result=allowed opening_boxes={list(self.active_boxes)}")
+        for box in sorted(self.active_boxes):
+            self.arduino.servo_open(box)
         self.mode = RobotMode.WAITING_FOR_HANDOFF
         self.handoff_started_at_s = time.monotonic()
-        self.handoff_seen_pressed = self.box_present.get(self.active_job.box_id, False)
-        self.handoff_seen_released = False
-        self.arduino.lcd_set(waiting_handoff_lines(self.active_job, len(self.queue)))
+        self.handoff_boxes_pressed = {
+            box for box in self.active_boxes if self.box_present.get(box) is True
+        }
+        self.handoff_boxes_released.clear()
+        self.next_presence_refresh_s = self.handoff_started_at_s + 0.5
+        self._request_state_refresh()
+        self.arduino.lcd_set(
+            waiting_handoff_lines(self.active_job, len(self.queue), self.active_boxes)
+        )
 
     def _record_handoff_switch_state(self, box: int, pressed: bool) -> None:
-        if (
-            self.mode != RobotMode.WAITING_FOR_HANDOFF
-            or self.active_job is None
-            or self.active_job.box_id != box
-        ):
+        if self.mode != RobotMode.WAITING_FOR_HANDOFF or self.active_job is None:
+            return
+        if box not in self.active_boxes:
             return
         if pressed:
-            self.handoff_seen_pressed = True
+            self.handoff_boxes_pressed.add(box)
         else:
-            self.handoff_seen_released = True
+            self.handoff_boxes_released.add(box)
 
     def _maybe_start_return_home(self, now_s: float) -> None:
         if self.active_job is None or self.handoff_started_at_s is None:
             return
-        box = self.active_job.box_id
+        active_boxes = set(self.active_boxes)
         elapsed_s = now_s - self.handoff_started_at_s
         if elapsed_s < 5.0:
             return
-        if not self.handoff_seen_pressed or not self.handoff_seen_released:
+        if not active_boxes.issubset(self.handoff_boxes_pressed):
             return
-        if self.box_present.get(box) is not True:
+        if not active_boxes.issubset(self.handoff_boxes_released):
+            return
+        if any(self.box_present.get(box) is not True for box in active_boxes):
             return
 
         if len(self.queue) > 0:
             completed_job = self.active_job
             self._log(
-                f"delivery_complete cabinet={completed_job.cabinet_id} box={completed_job.box_id} next_job_pending=true"
+                f"delivery_complete cabinet={completed_job.cabinet_id} boxes={list(self.active_boxes)} next_job_pending=true"
             )
-            self.active_job = None
-            self.mode = RobotMode.IDLE
-            self.next_action_due_s = None
-            self.next_presence_refresh_s = None
-            self.handoff_started_at_s = None
-            self.handoff_seen_pressed = False
-            self.handoff_seen_released = False
-            self.loading_boxes_needed.clear()
-            self.loading_boxes_ready.clear()
-            self.loading_seen_released = {1: False, 2: False}
+            self._clear_active_delivery_state()
             self._try_start_next_job()
             return
 
@@ -352,6 +365,9 @@ class RobotStateMachine:
         self.pending_actions = home_route.actions.copy()
         self.mode = RobotMode.RETURNING_HOME
         self.handoff_started_at_s = None
+        self.handoff_boxes_pressed.clear()
+        self.handoff_boxes_released.clear()
+        self.next_presence_refresh_s = None
         self.arduino.lcd_set(returning_home_lines(len(self.queue)))
         if not self.pending_actions:
             self._finish_return_home()
@@ -361,16 +377,7 @@ class RobotStateMachine:
     def _finish_return_home(self) -> None:
         self._log("return_home_complete")
         self.current_pose = self.grid_map.home
-        self.active_job = None
-        self.mode = RobotMode.IDLE
-        self.next_action_due_s = None
-        self.next_presence_refresh_s = None
-        self.handoff_started_at_s = None
-        self.handoff_seen_pressed = False
-        self.handoff_seen_released = False
-        self.loading_boxes_needed.clear()
-        self.loading_boxes_ready.clear()
-        self.loading_seen_released = {1: False, 2: False}
+        self._clear_active_delivery_state()
         self._refresh_idle_lcd()
         self._try_start_next_job()
 
@@ -383,6 +390,46 @@ class RobotStateMachine:
     def _request_state_refresh(self) -> None:
         if hasattr(self.arduino, "get_state"):
             self.arduino.get_state()
+
+    def _handle_reset_request(self) -> None:
+        self._log("reset_requested")
+        if hasattr(self.arduino, "stop"):
+            self.arduino.stop()
+        self.keypad_parser.reset()
+        self.queue.clear()
+        self.current_pose = self.grid_map.home
+        self.box_present = {1: None, 2: None}
+        self._clear_active_delivery_state()
+        if hasattr(self.arduino, "ping"):
+            self.arduino.ping()
+        self._request_state_refresh()
+        self._refresh_idle_lcd()
+
+    def _collect_active_boxes(self, first_job: DeliveryJob) -> tuple[int, ...]:
+        boxes = [first_job.box_id]
+        while True:
+            next_job = self.queue.peek()
+            if next_job is None or next_job.cabinet_id != first_job.cabinet_id:
+                break
+            if next_job.box_id in boxes:
+                break
+            boxes.append(next_job.box_id)
+            self.queue.pop()
+        return tuple(boxes)
+
+    def _clear_active_delivery_state(self) -> None:
+        self.active_job = None
+        self.active_boxes = ()
+        self.pending_actions.clear()
+        self.mode = RobotMode.IDLE
+        self.next_action_due_s = None
+        self.next_presence_refresh_s = None
+        self.handoff_started_at_s = None
+        self.handoff_boxes_pressed.clear()
+        self.handoff_boxes_released.clear()
+        self.loading_boxes_needed.clear()
+        self.loading_boxes_ready.clear()
+        self.loading_seen_released = {1: False, 2: False}
 
     def _refresh_idle_lcd(self) -> None:
         self.arduino.lcd_set(idle_lines(self.keypad_parser.buffer, len(self.queue)))

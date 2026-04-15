@@ -12,6 +12,7 @@ static constexpr uint8_t SERVO_BOX1_PIN = 2;
 static constexpr uint8_t SERVO_BOX2_PIN = 3;
 static constexpr uint8_t SERVO_OPEN_ANGLE = 0;
 static constexpr uint8_t SERVO_CLOSE_ANGLE = 90;
+static constexpr unsigned long SERVO_OPEN_TRANSITION_MS = 6000;
 
 static constexpr uint8_t MOTOR_RIGHT_DIR_PIN = 4;
 static constexpr uint8_t MOTOR_RIGHT_PWM_PIN = 5;

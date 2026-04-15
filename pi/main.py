@@ -10,7 +10,7 @@ from pi.cabinet_index import CabinetIndex
 from pi.card_registry import CardRegistry
 from pi.config import load_project_config
 from pi.map_loader import load_grid_map
-from pi.serial_link import SerialJsonLink
+from pi.serial_link import SerialJsonLink, SerialLinkDisconnected
 from pi.state_machine import RobotStateMachine
 
 
@@ -64,6 +64,20 @@ def maybe_upload_firmware(port: str, env_name: str) -> None:
     subprocess.run(command, cwd=project_root, check=True)
 
 
+def ensure_arduino_connection(
+    arduino: ArduinoClient,
+    log: callable,
+    retry_delay_s: float = 1.0,
+) -> None:
+    while True:
+        try:
+            arduino.open()
+            return
+        except SerialLinkDisconnected as exc:
+            log(f"[main] Waiting for Arduino serial port: {exc}")
+            time.sleep(retry_delay_s)
+
+
 def main() -> None:
     args = parse_args()
     config = load_project_config()
@@ -92,26 +106,36 @@ def main() -> None:
         logger=log if args.verbose_state else None,
     )
 
-    arduino.open()
+    ensure_arduino_connection(arduino, log)
     ready_seen = False
+    started = False
 
     try:
         while True:
-            message = arduino.read_message()
-            if message is not None:
-                if (
-                    message.get("type") == "event"
-                    and message.get("event") == "ready"
-                    and not ready_seen
-                ):
-                    ready_seen = True
-                    log("[main] Arduino ready; sending startup commands")
-                    arduino.ping()
-                    arduino.get_state()
-                    if args.lcd_demo_on_start:
-                        arduino.lcd_demo()
-                    machine.start()
-                machine.process_message(message)
+            try:
+                message = arduino.read_message()
+                if message is not None:
+                    if (
+                        message.get("type") == "event"
+                        and message.get("event") == "ready"
+                        and not ready_seen
+                    ):
+                        ready_seen = True
+                        log("[main] Arduino ready; sending startup commands")
+                        arduino.ping()
+                        arduino.get_state()
+                        if args.lcd_demo_on_start:
+                            arduino.lcd_demo()
+                        if not started:
+                            machine.start()
+                            started = True
+                    machine.process_message(message)
+            except SerialLinkDisconnected as exc:
+                ready_seen = False
+                log(f"[main] Serial link lost; reconnecting: {exc}")
+                arduino.close()
+                ensure_arduino_connection(arduino, log)
+                continue
             machine.tick()
             time.sleep(0.01)
     finally:

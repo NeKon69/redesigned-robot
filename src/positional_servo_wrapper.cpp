@@ -1,5 +1,7 @@
 #include "positional_servo_wrapper.h"
 
+#include "runtime_config.h"
+
 PositionalServoWrapper::PositionalServoWrapper(uint8_t signal_pin,
                                                uint8_t open_angle,
                                                uint8_t close_angle)
@@ -20,7 +22,7 @@ void PositionalServoWrapper::setAngle(uint8_t angle) {
 void PositionalServoWrapper::open() {
   clearQueue();
   enqueueAngle(open_angle_, 0);
-  enqueueAngle(180, 2000);
+  enqueueAngle(180, SERVO_OPEN_TRANSITION_MS);
 }
 
 void PositionalServoWrapper::close() {

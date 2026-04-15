@@ -10,6 +10,12 @@ class FakeArduinoClient:
         self.commands: list[tuple[str, object]] = []
         self._lcd_busy = False
 
+    def ping(self) -> None:
+        self.commands.append(("ping", None))
+
+    def stop(self) -> None:
+        self.commands.append(("stop", None))
+
     def lcd_set(self, lines: list[str]) -> None:
         self.commands.append(("lcd_set", lines))
         self._lcd_busy = False
@@ -148,6 +154,71 @@ def test_multi_box_queue_opens_both_boxes_at_home() -> None:
     assert not any(command == "move" for command, _ in fake.commands)
 
 
+def test_zero_key_resets_state_and_restarts_handshake() -> None:
+    machine, fake = build_machine()
+    machine.start()
+    set_switch_state(machine, False, True)
+    enter_job(machine, "2#2##")
+
+    assert machine.mode == RobotMode.WAITING_FOR_BOX
+
+    machine.process_message(
+        {"type": "event", "event": "key_event", "key": "0", "state": "pressed"}
+    )
+
+    assert machine.mode == RobotMode.IDLE
+    assert machine.active_job is None
+    assert machine.active_boxes == ()
+    assert machine.pending_actions == []
+    assert len(machine.queue) == 0
+    assert machine.keypad_parser.buffer == ""
+    assert ("stop", None) in fake.commands
+    assert ("ping", None) in fake.commands
+    assert fake.commands.count(("get_state", None)) >= 2
+
+
+def test_same_cabinet_two_boxes_open_together_after_one_scan() -> None:
+    machine, fake = build_machine()
+    machine.start()
+    set_switch_state(machine, False, False)
+    enter_job(machine, "2#1#2#2##")
+
+    assert machine.mode == RobotMode.WAITING_FOR_BOX
+    assert ("servo_open", 1) in fake.commands
+    assert ("servo_open", 2) in fake.commands
+
+    finish_loading(machine, 1)
+    finish_loading_and_flush(machine, 2)
+
+    while machine.mode == RobotMode.MOVING_TO_CABINET:
+        machine.process_message({"type": "event", "event": "motion_done"})
+        flush_scheduled_actions(machine)
+
+    assert machine.mode == RobotMode.WAITING_FOR_CARD
+    machine.process_message({"type": "event", "event": "rfid_scan", "uid": "56DA841F"})
+
+    assert machine.mode == RobotMode.WAITING_FOR_HANDOFF
+    assert fake.commands.count(("servo_open", 1)) >= 2
+    assert fake.commands.count(("servo_open", 2)) >= 2
+
+    machine.process_message(
+        {"type": "event", "event": "switch_state", "box": 1, "pressed": False}
+    )
+    machine.process_message(
+        {"type": "event", "event": "switch_state", "box": 1, "pressed": True}
+    )
+    machine.process_message(
+        {"type": "event", "event": "switch_state", "box": 2, "pressed": False}
+    )
+    machine.process_message(
+        {"type": "event", "event": "switch_state", "box": 2, "pressed": True}
+    )
+    machine.tick(now_s=machine.handoff_started_at_s + 6.0)
+
+    assert len(machine.queue) == 0
+    assert machine.mode in {RobotMode.RETURNING_HOME, RobotMode.IDLE}
+
+
 def test_box_close_waits_before_first_move() -> None:
     machine, fake = build_machine()
     machine.start()
@@ -219,6 +290,46 @@ def test_queue_continues_to_next_job_before_returning_home() -> None:
     assert machine.active_job.cabinet_id == "1"
     assert machine.active_job.box_id == 1
     assert machine.mode == RobotMode.MOVING_TO_CABINET
+
+
+def test_second_job_handoff_can_finish_from_polled_state_snapshots() -> None:
+    machine, fake = build_machine()
+    machine.start()
+    set_switch_state(machine, True, True)
+    enter_job(machine, "2#2#1#1##")
+    finish_loading(machine, 1)
+    finish_loading_and_flush(machine, 2)
+
+    while machine.mode == RobotMode.MOVING_TO_CABINET:
+        machine.process_message({"type": "event", "event": "motion_done"})
+        flush_scheduled_actions(machine)
+
+    machine.process_message({"type": "event", "event": "rfid_scan", "uid": "56DA841F"})
+    machine.process_message(
+        {"type": "event", "event": "switch_state", "box": 2, "pressed": False}
+    )
+    machine.process_message(
+        {"type": "event", "event": "switch_state", "box": 2, "pressed": True}
+    )
+    machine.tick(now_s=machine.handoff_started_at_s + 6.0)
+
+    while machine.mode == RobotMode.MOVING_TO_CABINET:
+        machine.process_message({"type": "event", "event": "motion_done"})
+        flush_scheduled_actions(machine)
+
+    assert machine.mode == RobotMode.WAITING_FOR_CARD
+
+    get_state_count_before = fake.commands.count(("get_state", None))
+    machine.process_message({"type": "event", "event": "rfid_scan", "uid": "56DA841F"})
+    machine.tick(now_s=machine.handoff_started_at_s + 0.6)
+
+    assert fake.commands.count(("get_state", None)) > get_state_count_before
+
+    set_switch_state(machine, False, True)
+    set_switch_state(machine, True, True)
+    machine.tick(now_s=machine.handoff_started_at_s + 6.0)
+
+    assert machine.mode in {RobotMode.RETURNING_HOME, RobotMode.IDLE}
 
 
 def test_invalid_rfid_keeps_waiting_for_card() -> None:

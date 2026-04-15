@@ -36,6 +36,7 @@ The Arduino only executes hardware actions and reports hardware events.
 3. Pi parses request strings like:
    - `123#2##`
    - `123#2#111#1##`
+   - `2#1#2#2##` to open both boxes at cabinet `2` after one RFID scan
 4. Pi sends LCD text updates back to Arduino while the user types
 5. Pi resolves each cabinet id to a location on the robot map
 6. Pi computes a route and sends movement commands to Arduino
@@ -52,7 +53,8 @@ Queue handling rules:
 - requests are executed strictly in entered order
 - the same cabinet may appear more than once
 - box `1` and box `2` are separate targets
-- both boxes may target the same cabinet using separate entries
+- consecutive `cabinet#1` and `cabinet#2` entries are served in one stop
+- keypad `0` clears the current workflow and re-establishes the startup handshake
 
 Box-present switch rules:
 

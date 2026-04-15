@@ -16,6 +16,9 @@ FORWARD_DELTA: dict[Heading, tuple[int, int]] = {
     "S": (0, 1),
     "W": (-1, 0),
 }
+REVERSE_DELTA: dict[Heading, tuple[int, int]] = {
+    heading: (-dx, -dy) for heading, (dx, dy) in FORWARD_DELTA.items()
+}
 
 
 @dataclass(frozen=True)
@@ -72,6 +75,25 @@ def plan_route(grid_map: GridMap, start: Pose, goal: Pose) -> PlannedRoute:
                 previous[forward_state] = (state, "forward_cell")
                 heapq.heappush(
                     queue, (forward_cost[0], forward_cost[1], nx, ny, heading)
+                )
+
+        reverse_dx, reverse_dy = REVERSE_DELTA[heading]
+        reverse_x, reverse_y = x + reverse_dx, y + reverse_dy
+        if grid_map.is_open(reverse_x, reverse_y):
+            reverse_state = (reverse_x, reverse_y, heading)
+            reverse_cost = (turns, steps + 1)
+            if reverse_cost < best_cost.get(reverse_state, (10**9, 10**9)):
+                best_cost[reverse_state] = reverse_cost
+                previous[reverse_state] = (state, "reverse_cell")
+                heapq.heappush(
+                    queue,
+                    (
+                        reverse_cost[0],
+                        reverse_cost[1],
+                        reverse_x,
+                        reverse_y,
+                        heading,
+                    ),
                 )
 
     if goal_key is None:
