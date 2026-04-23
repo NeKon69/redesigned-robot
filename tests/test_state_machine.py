@@ -13,6 +13,9 @@ class FakeArduinoClient:
     def ping(self) -> None:
         self.commands.append(("ping", None))
 
+    def rfid_reset(self) -> None:
+        self.commands.append(("rfid_reset", None))
+
     def stop(self) -> None:
         self.commands.append(("stop", None))
 
@@ -174,7 +177,33 @@ def test_zero_key_resets_state_and_restarts_handshake() -> None:
     assert machine.keypad_parser.buffer == ""
     assert ("stop", None) in fake.commands
     assert ("ping", None) in fake.commands
+    assert ("rfid_reset", None) in fake.commands
     assert fake.commands.count(("get_state", None)) >= 2
+
+
+def test_reset_allows_new_job_to_reach_card_wait_state_cleanly() -> None:
+    machine, fake = build_machine()
+    machine.start()
+    set_switch_state(machine, False, True)
+    enter_job(machine, "2#2##")
+
+    machine.process_message(
+        {"type": "event", "event": "key_event", "key": "0", "state": "pressed"}
+    )
+
+    set_switch_state(machine, False, True)
+    enter_job(machine, "2#2##")
+    finish_loading_and_flush(machine, 2)
+
+    while machine.mode == RobotMode.MOVING_TO_CABINET:
+        machine.process_message({"type": "event", "event": "motion_done"})
+        flush_scheduled_actions(machine)
+
+    assert machine.mode == RobotMode.WAITING_FOR_CARD
+    machine.process_message({"type": "event", "event": "rfid_scan", "uid": "56DA841F"})
+
+    assert machine.mode == RobotMode.WAITING_FOR_HANDOFF
+    assert fake.commands.count(("servo_open", 2)) >= 2
 
 
 def test_same_cabinet_two_boxes_open_together_after_one_scan() -> None:

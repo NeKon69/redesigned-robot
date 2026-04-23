@@ -41,6 +41,9 @@ class ArduinoClient:
     def ping(self) -> None:
         self._link.send_raw_line(encode_compact_command("ping"), "@P")
 
+    def rfid_reset(self) -> None:
+        self._link.send_raw_line(encode_compact_command("rfid_reset"), "@R")
+
     def get_state(self) -> None:
         self._link.send_raw_line(encode_compact_command("get_state"), "@G")
 

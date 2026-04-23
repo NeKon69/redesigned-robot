@@ -236,6 +236,9 @@ Example Pi -> Arduino commands:
 {"type":"move","action":"turn_left"}
 ```
 
+Compact command note:
+- `@R` reinitializes the Arduino RFID reader and is used by Pi-side full reset.
+
 Protocol rules:
 
 - Pi owns decisions

@@ -402,6 +402,8 @@ class RobotStateMachine:
         self._clear_active_delivery_state()
         if hasattr(self.arduino, "ping"):
             self.arduino.ping()
+        if hasattr(self.arduino, "rfid_reset"):
+            self.arduino.rfid_reset()
         self._request_state_refresh()
         self._refresh_idle_lcd()
 

@@ -6,6 +6,7 @@ from typing import Any
 
 COMMAND_CODES: dict[str, str] = {
     "ping": "P",
+    "rfid_reset": "R",
     "get_state": "G",
     "lcd_clear": "C",
     "lcd_demo": "D",

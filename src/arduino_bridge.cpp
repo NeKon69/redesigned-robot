@@ -274,6 +274,12 @@ void ArduinoBridge::handleCompactCommand_(const String &line) {
     return;
   }
 
+   if (opcode == "R") {
+    rfid_.begin();
+    protocol_.sendAck("rfid_reset");
+    return;
+  }
+
   if (opcode == "G") {
     emitState_();
     protocol_.sendAck("get_state");

@@ -188,6 +188,7 @@
 ## Compact Command Conventions
 
 - `@P` means ping.
+- `@R` means reinitialize RFID reader.
 - `@G` means get state.
 - `@C` means LCD clear.
 - `@D` means LCD demo screen.
